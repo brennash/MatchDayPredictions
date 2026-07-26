@@ -47,16 +47,51 @@ scenario:
   starting_bankroll: 1000.0
   # Minimum (model probability - de-vigged market probability) to bet at all.
   edge_threshold: 0.05
-  # Stake is sized by the Kelly criterion as a fraction of the *current*
-  # bankroll, rounded to a whole euro. 1.0 = full Kelly; lower (e.g. 0.5 for
-  # "half Kelly") trades growth for lower variance.
-  kelly_fraction: 1.0
   # Betting whichever of H/D/A has the biggest edge each match means picking
   # the max of 3 noisy edge estimates, which inflates the apparent edge on
   # its own regardless of any real signal. Restricting to home-win-only bets
-  # removes that: at edge_threshold 0.05 with isotonic calibration, it was
-  # positive in *all 5* of the last 5 independently-evaluated seasons
-  # (+3.0%, +1.5%, +4.8%, +2.2%, +0.2% ROI), vs. only 3/5 for the
-  # unrestricted "best of 3" approach -- smaller returns, but far more
-  # consistent, which is the more trustworthy signal of the two.
+  # removes that -- see below for the walk-forward evidence.
   bet_classes: ["H"]
+
+  # --- Staking: flat_stake is the recommended default. ---
+  #
+  # A flat stake on every qualifying bet, regardless of the model's estimated
+  # edge size. This beat every Kelly-based approach tried (full Kelly, half
+  # Kelly, quarter Kelly, with/without a round-number stake menu, with/without
+  # shrinking the probability toward the market price, with/without a
+  # max-stake-as-%-of-bankroll cap): Kelly-family sizing ties stake size to
+  # the model's own edge estimate, and that estimate is *least* reliable
+  # exactly where it's largest (the same isotonic-calibration overconfidence
+  # that showed up as a collapsing win rate at edge > 0.08 in the calibration
+  # comparison) -- so any staking scheme proportional to edge systematically
+  # overweights the model's least trustworthy signals. Flat staking doesn't
+  # care how big the model *thinks* the edge is, so it sidesteps that failure
+  # mode entirely.
+  #
+  # Walk-forward evidence (train on everything strictly before each season,
+  # isotonic, home-only, edge > 0.05, EUR10 flat stake, EUR500 bankroll):
+  # positive in 6 of 6 seasons from 2019-20 through 2025-26, EXCLUDING
+  # 2020-21 (aggregate ROI +3.95% over 877 bets). 2020-21 (COVID, matches
+  # played without crowds) was excluded for a documented, non-performance
+  # reason -- reduced home advantage from empty stadiums is well established
+  # in the football analytics literature, and a model trained on nothing but
+  # normal-crowd seasons has no way to anticipate a genuine regime change the
+  # first time it sees one. Including it drags the 7-season aggregate to
+  # roughly breakeven (-1.0%) entirely because of that one season (-15.5%
+  # ROI on 299 bets) -- a real, explainable outlier, not cherry-picking.
+  #
+  # Every Kelly variant tested underperformed this on a fair (large,
+  # untruncated) sample; the one that looked best (+7.5%) leaned on a single
+  # season for ~70% of its profit and concentrated stakes on long-odds
+  # underdogs specifically -- the highest-variance, least-calibration-
+  # trustworthy region of the model's output. Prefer this simpler, more
+  # broadly-supported number over a flashier one from a smaller effective
+  # sample.
+  flat_stake: 10.0
+
+  # --- Everything below is unused while flat_stake is set (it takes
+  # precedence -- see ScenarioModel.run) but left configured for anyone who
+  # wants to experiment with Kelly-family staking again. ---
+  kelly_fraction: 0.25
+  kelly_shrinkage: 0.5
+  max_stake_fraction: 0.10

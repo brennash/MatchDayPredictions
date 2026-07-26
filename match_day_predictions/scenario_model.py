@@ -50,23 +50,31 @@ class ScenarioModel:
     aggregate.
     """
 
-    def __init__(self, config_filename, verbose_flag=False):
+    def __init__(self, config_filename, verbose_flag=False, model_bundle=None):
         self.verbose = verbose_flag
         with open(config_filename, 'r') as config_file:
             self.config = yaml.safe_load(config_file)
 
-        bundle = load_model_bundle(self.config['trained_model']['model_path'])
+        bundle = model_bundle or load_model_bundle(self.config['trained_model']['model_path'])
         self.model = bundle['model']
         self.feature_columns = bundle['feature_columns']
         self.classes = bundle['classes']
 
     def run(self, season, divisions=None, starting_bankroll=None, edge_threshold=None,
-            kelly_fraction=None, bet_classes=None, output_csv=None):
+            kelly_fraction=None, bet_classes=None, take_profit_bankroll=None,
+            stake_menu=None, kelly_shrinkage=None, max_stake_fraction=None,
+            flat_stake=None, output_csv=None):
         cfg = self.config.get('scenario', {})
         starting_bankroll = self._coalesce(starting_bankroll, cfg.get('starting_bankroll', 1000.0))
         edge_threshold = self._coalesce(edge_threshold, cfg.get('edge_threshold', 0.05))
         kelly_fraction = self._coalesce(kelly_fraction, cfg.get('kelly_fraction', 1.0))
         bet_classes = self._coalesce(bet_classes, cfg.get('bet_classes', None)) or list(OUTCOME_CLASSES)
+        take_profit_bankroll = self._coalesce(take_profit_bankroll, cfg.get('take_profit_bankroll', None))
+        stake_menu = self._coalesce(stake_menu, cfg.get('stake_menu', None))
+        stake_menu = sorted(stake_menu) if stake_menu else None
+        kelly_shrinkage = self._coalesce(kelly_shrinkage, cfg.get('kelly_shrinkage', 0.0))
+        max_stake_fraction = self._coalesce(max_stake_fraction, cfg.get('max_stake_fraction', None))
+        flat_stake = self._coalesce(flat_stake, cfg.get('flat_stake', None))
 
         df = self.load_season_features(season, divisions)
         if self.verbose:
@@ -78,6 +86,7 @@ class ScenarioModel:
         max_drawdown = 0.0
         ledger: List[Bet] = []
         bankrupt_at = None
+        stopped_at_take_profit = None
 
         candidates = self._score_candidates(df, edge_threshold, bet_classes)
 
@@ -92,9 +101,16 @@ class ScenarioModel:
             probabilities = {cls: row[f'_proba_{cls}'] for cls in OUTCOME_CLASSES}
             fair_prob = {cls: row[f'_fair_{cls}'] for cls in OUTCOME_CLASSES}
 
-            stake = self._kelly_stake(probabilities[best_class], odds[best_class], bankroll, kelly_fraction)
+            if flat_stake is not None:
+                stake = min(flat_stake, bankroll)
+            elif stake_menu:
+                stake = self._menu_stake(probabilities[best_class], fair_prob[best_class], odds[best_class],
+                                          bankroll, kelly_fraction, stake_menu, kelly_shrinkage, max_stake_fraction)
+            else:
+                stake = self._kelly_stake(probabilities[best_class], fair_prob[best_class], odds[best_class],
+                                           bankroll, kelly_fraction, kelly_shrinkage, max_stake_fraction)
             if stake < 1.0:
-                continue  # Kelly fraction rounds to less than a whole euro -- not worth a bet
+                continue  # rounds/snaps to less than a whole euro, or the bankroll can't afford any menu stake
 
             actual_result = self._actual_result(row)
             won = actual_result == best_class
@@ -112,7 +128,12 @@ class ScenarioModel:
                 bankroll_after=bankroll,
             ))
 
-        summary = self._summarize(starting_bankroll, bankroll, peak, max_drawdown, ledger, bankrupt_at)
+            if take_profit_bankroll is not None and peak > take_profit_bankroll:
+                stopped_at_take_profit = row['date']
+                break
+
+        summary = self._summarize(starting_bankroll, bankroll, peak, max_drawdown, ledger,
+                                   bankrupt_at, stopped_at_take_profit)
         self._print_summary(summary)
 
         if output_csv:
@@ -184,27 +205,77 @@ class ScenarioModel:
             return 'A'
         return 'D'
 
-    def _kelly_stake(self, prob, odds, bankroll, kelly_fraction):
-        """Kelly criterion stake for a single bet: f* = p - (1-p)/b, where b
-        is the net odds (decimal odds - 1) and p is the model's probability
-        of the chosen outcome. f* is the bankroll fraction that maximises
-        expected log growth; kelly_fraction scales it down (e.g. 0.5 for
-        "half Kelly") to trade growth for lower variance -- 1.0 is full
-        Kelly. The result is rounded to a whole euro and capped at the
-        current bankroll.
+    def _raw_kelly_stake(self, prob, fair_prob, odds, bankroll, kelly_fraction, kelly_shrinkage=0.0):
+        """Unconstrained Kelly criterion stake for a single bet: f* = p -
+        (1-p)/b, where b is the net odds (decimal odds - 1). f* is the
+        bankroll fraction that maximises expected log growth; kelly_fraction
+        scales it down (e.g. 0.5 for "half Kelly") to trade growth for lower
+        variance -- 1.0 is full Kelly.
+
+        p is not used at face value: it's shrunk toward the de-vigged
+        market probability fair_prob by kelly_shrinkage (0 = trust the
+        model's probability entirely, 1 = size as if there's no edge at
+        all). The model's biggest edge estimates are also its least
+        reliable ones (isotonic calibration overfits in exactly the sparse,
+        high-confidence region that produces them -- see the calibration
+        comparison), and raw Kelly stakes in direct proportion to the edge,
+        so without shrinkage it systematically puts the most money on the
+        estimates most likely to be wrong. bet *selection* still uses the
+        model's raw probability/edge -- this only affects how much gets
+        staked once a bet has already been chosen.
         """
         b = odds - 1.0
         if b <= 0:
             return 0.0
+        p_stake = (1.0 - kelly_shrinkage) * prob + kelly_shrinkage * fair_prob
+        f_star = max(p_stake - (1.0 - p_stake) / b, 0.0)
+        return kelly_fraction * f_star * bankroll
 
-        f_star = prob - (1.0 - prob) / b
-        f_star = max(f_star, 0.0)
+    def _cap_stake(self, raw_stake, bankroll, max_stake_fraction):
+        if max_stake_fraction is not None:
+            raw_stake = min(raw_stake, max_stake_fraction * bankroll)
+        return raw_stake
 
-        raw_stake = kelly_fraction * f_star * bankroll
+    def _kelly_stake(self, prob, fair_prob, odds, bankroll, kelly_fraction,
+                      kelly_shrinkage=0.0, max_stake_fraction=None):
+        """Kelly stake rounded to a whole euro and capped at the current
+        bankroll (and, if set, at max_stake_fraction of it).
+        """
+        raw_stake = self._raw_kelly_stake(prob, fair_prob, odds, bankroll, kelly_fraction, kelly_shrinkage)
+        raw_stake = self._cap_stake(raw_stake, bankroll, max_stake_fraction)
         whole_stake = round(raw_stake)
         return float(max(0.0, min(whole_stake, bankroll)))
 
-    def _summarize(self, starting_bankroll, ending_bankroll, peak, max_drawdown, ledger, bankrupt_at):
+    def _menu_stake(self, prob, fair_prob, odds, bankroll, kelly_fraction, stake_menu,
+                     kelly_shrinkage=0.0, max_stake_fraction=None):
+        """Kelly stake snapped to the closest value in stake_menu that the
+        current bankroll can afford, rather than any whole euro -- e.g. to
+        keep stakes looking like typical round amounts a casual bettor might
+        place, instead of precise algorithmically-sized figures.
+
+        Whether to bet at all is decided the same way as the plain
+        (unrestricted) Kelly stake -- round to the nearest whole euro and
+        require >= 1 -- so the menu only changes what a placed bet's stake
+        looks like, not which fixtures get bet on. Without this, a fixture
+        whose true Kelly stake is a small fraction of a euro (and would
+        normally round down to 0 and be skipped) would still get snapped up
+        to the menu's smallest value, forcing a flood of near-threshold,
+        low-quality bets that were never supposed to be placed.
+        """
+        raw_stake = self._raw_kelly_stake(prob, fair_prob, odds, bankroll, kelly_fraction, kelly_shrinkage)
+        raw_stake = self._cap_stake(raw_stake, bankroll, max_stake_fraction)
+        whole_stake = round(raw_stake)
+        if whole_stake < 1.0:
+            return 0.0
+
+        affordable = [value for value in stake_menu if value <= bankroll]
+        if not affordable:
+            return 0.0
+
+        return float(min(affordable, key=lambda value: abs(value - whole_stake)))
+
+    def _summarize(self, starting_bankroll, ending_bankroll, peak, max_drawdown, ledger,
+                    bankrupt_at, stopped_at_take_profit=None):
         total_bets = len(ledger)
         wins = sum(1 for bet in ledger if bet.won)
         total_staked = sum(bet.stake for bet in ledger)
@@ -220,6 +291,7 @@ class ScenarioModel:
             'peak_bankroll': peak,
             'max_drawdown': max_drawdown,
             'bankrupt_at': bankrupt_at,
+            'stopped_at_take_profit': stopped_at_take_profit,
         }
 
     def _print_summary(self, summary):
@@ -232,6 +304,8 @@ class ScenarioModel:
         print(f"Peak bankroll: {summary['peak_bankroll']:.2f}  Max drawdown: {summary['max_drawdown']:.2f}")
         if summary['bankrupt_at']:
             print(f"Ran out of bankroll on {summary['bankrupt_at']} -- stopped simulation early.")
+        if summary['stopped_at_take_profit']:
+            print(f"Peak bankroll target hit on {summary['stopped_at_take_profit']} -- stopped simulation early.")
 
     def _write_csv(self, output_csv, ledger):
         fieldnames = list(Bet.__dataclass_fields__.keys())

@@ -44,6 +44,22 @@ def build_parser():
     scenario_parser.add_argument('--bet-class', action='append', dest='bet_classes', choices=['H', 'D', 'A'],
                                   help="Outcome(s) allowed to be bet on (repeatable), e.g. --bet-class H to only "
                                        "ever back the home team. Default: whichever of H/D/A has the biggest edge.")
+    scenario_parser.add_argument('--take-profit', type=float, default=None, dest='take_profit_bankroll',
+                                  help='Stop betting for the rest of the season once peak bankroll exceeds this')
+    scenario_parser.add_argument('--stake-menu', default=None,
+                                  help='Comma-separated whole-euro stakes to snap Kelly stakes to instead of any '
+                                       'whole euro, e.g. "1,2,5,10,25,50,100"')
+    scenario_parser.add_argument('--kelly-shrinkage', type=float, default=None,
+                                  help='Blend the model probability toward the de-vigged market probability by '
+                                       'this much (0-1) before sizing the stake -- 0 = trust the model fully, '
+                                       '1 = size as if there were no edge. Only affects stake size, not which '
+                                       'fixtures get bet on.')
+    scenario_parser.add_argument('--max-stake-fraction', type=float, default=None,
+                                  help='Cap any single stake at this fraction of the current bankroll, e.g. 0.1')
+    scenario_parser.add_argument('--flat-stake', type=float, default=None,
+                                  help='Bet this fixed amount on every qualifying fixture instead of any Kelly '
+                                       'variant -- recommended default, see conf/config.yaml for why. Overrides '
+                                       '--kelly-fraction/--stake-menu/--kelly-shrinkage/--max-stake-fraction.')
     scenario_parser.add_argument('--output', help='Optional path to write the bet-by-bet ledger as CSV')
 
     return parser
@@ -77,6 +93,10 @@ def run_predict(args):
 
 
 def run_scenario(args):
+    stake_menu = None
+    if args.stake_menu:
+        stake_menu = [float(value) for value in args.stake_menu.split(',')]
+
     ScenarioModel(args.config, args.verbose).run(
         season=args.season,
         divisions=args.divisions,
@@ -84,6 +104,11 @@ def run_scenario(args):
         edge_threshold=args.edge_threshold,
         kelly_fraction=args.kelly_fraction,
         bet_classes=args.bet_classes,
+        take_profit_bankroll=args.take_profit_bankroll,
+        stake_menu=stake_menu,
+        kelly_shrinkage=args.kelly_shrinkage,
+        max_stake_fraction=args.max_stake_fraction,
+        flat_stake=args.flat_stake,
         output_csv=args.output,
     )
 
