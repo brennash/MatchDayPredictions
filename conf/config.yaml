@@ -1,0 +1,27 @@
+fixtures_raw:
+  fixtures_raw_folder: "data/fixtures_raw"
+
+fixtures:
+  fixtures_folder: "data/fixtures"
+
+features:
+  features_folder: "data/features"
+
+league:
+  # A team's rolling stats are too noisy to trust until it has played this
+  # many matches, so earlier fixtures are excluded from both training data
+  # and pagerank/league-position updates.
+  min_games_played: 5
+
+train:
+  # Most recent N seasons held out entirely from training/tuning, used only
+  # for final evaluation and the value-bet backtest.
+  holdout_seasons: 1
+  # Minimum (model probability - de-vigged market probability) required to
+  # place a backtested bet.
+  edge_threshold: 0.05
+  # Flat stake used in the value-bet backtest.
+  stake: 10.0
+
+trained_model:
+  model_path: "data/trained_model/trained_model.joblib"
