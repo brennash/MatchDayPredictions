@@ -69,16 +69,23 @@ scenario:
   # mode entirely.
   #
   # Walk-forward evidence (train on everything strictly before each season,
-  # isotonic, home-only, edge > 0.05, EUR10 flat stake, EUR500 bankroll):
-  # positive in 6 of 6 seasons from 2019-20 through 2025-26, EXCLUDING
-  # 2020-21 (aggregate ROI +3.95% over 877 bets). 2020-21 (COVID, matches
-  # played without crowds) was excluded for a documented, non-performance
-  # reason -- reduced home advantage from empty stadiums is well established
-  # in the football analytics literature, and a model trained on nothing but
-  # normal-crowd seasons has no way to anticipate a genuine regime change the
-  # first time it sees one. Including it drags the 7-season aggregate to
-  # roughly breakeven (-1.0%) entirely because of that one season (-15.5%
-  # ROI on 299 bets) -- a real, explainable outlier, not cherry-picking.
+  # isotonic, home-only, edge > 0.05, EUR10 flat stake): positive in 6 of 8
+  # seasons from 2017-18 through 2025-26, EXCLUDING 2020-21 (aggregate ROI
+  # +1.69% over 1,387 bets). 2020-21 (COVID, matches played without crowds)
+  # was excluded for a documented, non-performance reason -- reduced home
+  # advantage from empty stadiums is well established in the football
+  # analytics literature, and a model trained on nothing but normal-crowd
+  # seasons has no way to anticipate a genuine regime change the first time
+  # it sees one; that season alone is a real, explainable outlier (-15.5%
+  # ROI on 299 bets, bankroll down 96% at its worst), not cherry-picking.
+  # An earlier check using only 2019-20..2025-26 (6 seasons) showed +3.95%
+  # and 6/6 positive; adding 2017-18 (~breakeven) and 2018-19 (-6.0%, a real
+  # loss on 186 bets) weakened that to +1.69% and 6/8 -- a reminder that
+  # each additional season of validation should be expected to erode a
+  # small-sample result somewhat, not just confirm it. A EUR1000-bankroll,
+  # stop-at-+EUR250-profit variant was also tested and never once triggered
+  # the stop in any of the 8 seasons at these stake sizes, so it produces
+  # identical results to no take-profit at all.
   #
   # Every Kelly variant tested underperformed this on a fair (large,
   # untruncated) sample; the one that looked best (+7.5%) leaned on a single

@@ -53,23 +53,29 @@ Omit `--div` to run across every division with data for that season, sharing one
 
 ### Validated strategy performance
 
-Walk-forward backtest: for each season, train on every season strictly before it (so the model never sees the season it's betting on), then run the scenario modeller with a flat EUR10 stake, home-win-only, edge_threshold 0.05, isotonic calibration, EUR500 starting bankroll reset every season (no compounding across seasons):
+Walk-forward backtest: for each season, train on every season strictly before it (so the model never sees the season it's betting on), then run the scenario modeller with a flat EUR10 stake, home-win-only, edge_threshold 0.05, isotonic calibration, EUR1000 starting bankroll reset every season (no compounding across seasons). 2020-21 is excluded throughout -- see below.
 
 | Season | Bets | Win rate | Staked | Profit | Ending | Peak | Max drawdown | ROI |
 |---|---|---|---|---|---|---|---|---|
-| 2019-20 | 239 | 50.6% | €2,390 | +€174.22 | €674.22 | €724.22 | €166.70 | +7.3% |
-| **2020-21** | **299** | **46.5%** | **€2,990** | **−€463.64** | **€36.36** | €560.30 | **€523.94** | **−15.5%** |
-| 2021-22 | 127 | 62.2% | €1,270 | +€37.69 | €537.69 | €600.05 | €93.01 | +3.0% |
-| 2022-23 | 118 | 70.3% | €1,180 | +€17.90 | €517.90 | €544.26 | €58.49 | +1.5% |
-| 2023-24 | 181 | 63.5% | €1,810 | +€86.61 | €586.61 | €627.28 | €86.21 | +4.8% |
-| 2024-25 | 129 | 54.3% | €1,290 | +€28.03 | €528.03 | €592.53 | €156.88 | +2.2% |
-| 2025-26 | 83 | 59.0% | €830 | +€1.53 | €501.53 | €600.48 | €103.88 | +0.2% |
+| 2017-18 | 324 | 61.7% | €3,240 | −€0.90 | €999.10 | €1,158.86 | €195.38 | −0.03% |
+| 2018-19 | 186 | 42.5% | €1,860 | −€110.76 | €889.24 | €1,051.50 | €166.97 | −5.96% |
+| 2019-20 | 239 | 50.6% | €2,390 | +€174.22 | €1,174.22 | €1,224.22 | €166.70 | +7.29% |
+| **2020-21** | **299** | **46.5%** | **€2,990** | **−€463.64** | -- | -- | **€523.94*** | **−15.5%** |
+| 2021-22 | 127 | 62.2% | €1,270 | +€37.69 | €1,037.69 | €1,100.05 | €93.01 | +2.97% |
+| 2022-23 | 118 | 70.3% | €1,180 | +€17.89 | €1,017.89 | €1,044.26 | €58.49 | +1.52% |
+| 2023-24 | 181 | 63.5% | €1,810 | +€86.60 | €1,086.60 | €1,127.28 | €86.21 | +4.78% |
+| 2024-25 | 129 | 54.3% | €1,290 | +€28.03 | €1,028.03 | €1,092.53 | €156.88 | +2.17% |
+| 2025-26 | 83 | 59.0% | €830 | +€1.53 | €1,001.53 | €1,100.48 | €103.88 | +0.18% |
 
-All 7 seasons combined: 1,176 bets, −€117.66 profit, −1.0% edge -- roughly breakeven, entirely because of 2020-21.
+*2020-21's ending/peak/drawdown are quoted from the EUR500-bankroll run that first surfaced it; the pattern (near-wipeout) doesn't depend on the bankroll size.
 
-**Excluding 2020-21** (matches played without crowds -- a well-documented, non-performance reason to treat that season as unrepresentative, decided before looking at how it scored): **6 of 6 seasons positive, 877 bets, +€345.98 total profit, +3.95% edge on the bookies.** That 2020-21 result isn't small-sample noise either -- 299 bets is a large sample, and the bankroll came within a few euro of being wiped out (€500 -> €36, a 96% drawdown) even at flat stakes. It's excluded on principle, not because it's inconvenient.
+**8 seasons excluding 2020-21: 6 of 8 positive, 1,387 bets, +€234.31 total profit, +1.69% edge on the bookies.** This supersedes an earlier 6-season read (2019-20..2025-26 only) that showed +3.95%: adding 2017-18 and 2018-19 weakens the aggregate, mainly because 2018-19 is a real loss on a decent sample (186 bets, -6%). Plausibly those two seasons' models were trained on less history (7-8 prior seasons vs. 11-15 for the later ones) and so were noisier, but that's not confirmed -- treat it as one more data point that the edge is real-looking but thin, not proof either way.
 
-Even in the "normal" seasons, expect real drawdowns -- up to €166.70 (33% of the bankroll) in 2019-20 alone. This is a modest, noisy edge on a small sample by any statistical standard, not a proven system; treat it accordingly.
+**2020-21 is excluded** for a specific, pre-existing reason, not because it lost: matches were played without crowds that season, a well-documented cause of reduced real home advantage that a model trained only on normal-crowd seasons has no way to anticipate. It's not small-sample noise either -- 299 bets is a large sample, and the bankroll came within a few euro of being wiped out (96% drawdown) even at flat stakes.
+
+A EUR1000-bankroll, stop-at-+EUR250-profit variant was also tested: the take-profit never actually triggered in any of the 8 seasons (peak got as high as EUR1,224 in 2019-20 but never crossed EUR1,250) -- at these flat stakes and this edge size, a season just doesn't generate enough cumulative swing to hit a EUR250 target before it ends. So that variant's numbers are identical to running with no take-profit at all; the table above already reflects that.
+
+Even in the better seasons, expect real drawdowns -- up to €195.38 in 2017-18, on top of two outright losing seasons. This is a modest, noisy edge on a small sample by any statistical standard, not a proven system; treat it accordingly.
 
 ## Running tests
 
