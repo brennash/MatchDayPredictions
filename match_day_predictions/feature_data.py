@@ -8,6 +8,8 @@ class FeatureData:
     div: str = ""
     home_team: str = ""
     away_team: str = ""
+    # ISO YYYY-MM-DD. "" for prediction-time rows with no fixed kickoff date.
+    date: str = ""
 
     # Unknown (None) for prediction-time rows, where the fixture hasn't been played.
     home_ft: Optional[float] = None

@@ -203,13 +203,14 @@ class League:
 
         head = [
             fixture_data.season, fixture_data.div, fixture_data.home_team, fixture_data.away_team,
+            fixture_data.date,
             fixture_data.home_ft, fixture_data.away_ft,
             is_home_win, is_away_win, is_draw,
         ]
         head.extend(self._odds_head(fixture_data))
         return FeatureData(*head, *self._team_derived_features(home_team, away_team))
 
-    def get_prediction_features(self, home_team, away_team, odds=None):
+    def get_prediction_features(self, home_team, away_team, odds=None, date=None):
         """Inference-time feature row for a fixture that hasn't been played
         (or a hypothetical pairing): same team-derived tail as get_features,
         but the outcome is unknown and odds are optional/supplied by the
@@ -222,6 +223,7 @@ class League:
 
         head = [
             self.season, self.div, home_team.get_name(), away_team.get_name(),
+            date or "",
             None, None,
             None, None, None,
         ]

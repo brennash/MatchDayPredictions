@@ -5,6 +5,7 @@ from match_day_predictions.import_fixtures import ImportFixtures
 from match_day_predictions.create_features import CreateFeatures
 from match_day_predictions.train_model import TrainModel
 from match_day_predictions.predict import Predict, format_prediction
+from match_day_predictions.scenario_model import ScenarioModel
 
 
 def build_parser():
@@ -28,6 +29,22 @@ def build_parser():
     predict_parser.add_argument('--away-odds', type=float, default=None, help='Average away win odds')
     predict_parser.add_argument('--fixtures-file', help='CSV of fixtures to predict in batch: '
                                                           'div,season,home_team,away_team[,home_odds,draw_odds,away_odds]')
+
+    scenario_parser = subparsers.add_parser(
+        'scenario', help='Simulate betting the model\'s value bets over a season and track bankroll'
+    )
+    scenario_parser.add_argument('--season', required=True, help='Season code, e.g. 2526')
+    scenario_parser.add_argument('--div', action='append', dest='divisions',
+                                  help='Division to include (repeatable). Default: all divisions with data for the season.')
+    scenario_parser.add_argument('--starting-bankroll', type=float, default=None)
+    scenario_parser.add_argument('--edge-threshold', type=float, default=None,
+                                  help='Minimum (model prob - market prob) required to bet')
+    scenario_parser.add_argument('--kelly-fraction', type=float, default=None,
+                                  help='Fraction of the full Kelly stake to bet (1.0 = full Kelly, 0.5 = half Kelly)')
+    scenario_parser.add_argument('--bet-class', action='append', dest='bet_classes', choices=['H', 'D', 'A'],
+                                  help="Outcome(s) allowed to be bet on (repeatable), e.g. --bet-class H to only "
+                                       "ever back the home team. Default: whichever of H/D/A has the biggest edge.")
+    scenario_parser.add_argument('--output', help='Optional path to write the bet-by-bet ledger as CSV')
 
     return parser
 
@@ -59,6 +76,18 @@ def run_predict(args):
     print(format_prediction(result))
 
 
+def run_scenario(args):
+    ScenarioModel(args.config, args.verbose).run(
+        season=args.season,
+        divisions=args.divisions,
+        starting_bankroll=args.starting_bankroll,
+        edge_threshold=args.edge_threshold,
+        kelly_fraction=args.kelly_fraction,
+        bet_classes=args.bet_classes,
+        output_csv=args.output,
+    )
+
+
 def main(argv):
     parser = build_parser()
     args = parser.parse_args(argv[1:])
@@ -71,6 +100,8 @@ def main(argv):
         TrainModel(args.config, args.verbose).run()
     elif args.command == 'predict':
         run_predict(args)
+    elif args.command == 'scenario':
+        run_scenario(args)
 
 
 if __name__ == "__main__":

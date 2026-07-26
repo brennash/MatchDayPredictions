@@ -13,7 +13,7 @@ from sklearn.metrics import accuracy_score, log_loss
 from sklearn.model_selection import GroupKFold, RandomizedSearchCV
 
 INFORMATIONAL_COLUMNS = [
-    'season', 'div', 'home_team', 'away_team', 'home_ft', 'away_ft',
+    'season', 'div', 'home_team', 'away_team', 'date', 'home_ft', 'away_ft',
     'is_home_win', 'is_away_win', 'is_draw',
 ]
 
@@ -41,6 +41,8 @@ class TrainModel:
         holdout_seasons = int(train_cfg.get('holdout_seasons', 1))
         edge_threshold = float(train_cfg.get('edge_threshold', 0.05))
         stake = float(train_cfg.get('stake', 10.0))
+        calibration_method = train_cfg.get('calibration_method', 'isotonic')
+        bet_classes = train_cfg.get('bet_classes', None)
 
         df_train, df_holdout = self.time_based_split(df, holdout_seasons)
         if self.verbose:
@@ -54,12 +56,12 @@ class TrainModel:
         if self.verbose:
             print(f"Best hyperparameters: {best_params}")
 
-        model = self.fit_calibrated_model(X_train, y_train, groups_train, best_params)
+        model = self.fit_calibrated_model(X_train, y_train, groups_train, best_params, method=calibration_method)
 
         self.evaluate(model, X_holdout, y_holdout)
-        self.backtest_value_bets(model, df_holdout, X_holdout, edge_threshold, stake)
+        self.backtest_value_bets(model, df_holdout, X_holdout, edge_threshold, stake, bet_classes)
 
-        self.save(model, list(X_train.columns), best_params, df_train, df_holdout)
+        self.save(model, list(X_train.columns), best_params, df_train, df_holdout, calibration_method)
 
     def load_features(self, features_folder):
         rows = []
@@ -125,15 +127,17 @@ class TrainModel:
         search.fit(X_train, y_train)
         return search.best_params_
 
-    def fit_calibrated_model(self, X_train, y_train, groups_train, best_params, n_splits=4):
+    def fit_calibrated_model(self, X_train, y_train, groups_train, best_params, n_splits=4, method='isotonic'):
         """Fits the tuned model wrapped in probability calibration, using the
         same season-grouped folds so calibration is also evaluated on unseen
-        seasons rather than a random split.
+        seasons rather than a random split. method is 'isotonic' (flexible,
+        can overfit smaller folds) or 'sigmoid' (Platt scaling -- more
+        constrained, often more robust with limited data per fold).
         """
         n_splits = min(n_splits, groups_train.nunique())
         cv = list(GroupKFold(n_splits=n_splits).split(X_train, y_train, groups=groups_train))
         base_estimator = HistGradientBoostingClassifier(random_state=42, **best_params)
-        model = CalibratedClassifierCV(base_estimator, method='isotonic', cv=cv)
+        model = CalibratedClassifierCV(base_estimator, method=method, cv=cv)
         model.fit(X_train, y_train)
         return model
 
@@ -159,10 +163,32 @@ class TrainModel:
         print(f"Multiclass Brier score: {brier:.4f}")
         print(f"Class distribution (holdout): {y_holdout.value_counts(normalize=True).to_dict()}")
 
-    def backtest_value_bets(self, model, df_holdout, X_holdout, edge_threshold, stake):
+    def backtest_value_bets(self, model, df_holdout, X_holdout, edge_threshold, stake, allowed_classes=None):
         """Backtests: bet a flat stake on whichever outcome has the largest
         (model probability - de-vigged bookmaker implied probability), when
         that edge exceeds edge_threshold. Skips rows with no odds coverage.
+        allowed_classes restricts which outcome(s) can be bet on (e.g. ['H']
+        to only ever back the home team) -- default (None) considers all
+        three and bets whichever has the biggest edge.
+        """
+        stats = self.compute_backtest_stats(model, df_holdout, X_holdout, edge_threshold, stake, allowed_classes)
+
+        print("\n=== Value-bet backtest ===")
+        if stats['bets_placed'] == 0:
+            print(f"No bets cleared the edge threshold ({edge_threshold}).")
+            return
+        print(f"Bets placed: {stats['bets_placed']} / {stats['odds_covered_rows']} "
+              f"odds-covered holdout rows (edge > {edge_threshold})")
+        print(f"Win rate: {stats['win_rate']:.4f}")
+        print(f"Total staked: {stats['total_staked']:.2f}, total profit: {stats['total_profit']:.2f}, "
+              f"ROI: {stats['roi']:.4f}")
+
+    def compute_backtest_stats(self, model, df_holdout, X_holdout, edge_threshold, stake, allowed_classes=None):
+        """Same flat-stake value-bet backtest as backtest_value_bets, but
+        returns the numbers instead of printing -- used both there and by
+        the walk-forward calibration/threshold comparison in
+        scripts/compare_calibration.py. allowed_classes restricts which
+        outcome(s) can be bet on; None considers all three.
         """
         classes = list(model.classes_)
         proba = pd.DataFrame(model.predict_proba(X_holdout), columns=classes, index=df_holdout.index)
@@ -176,19 +202,20 @@ class TrainModel:
         overround = implied.sum(axis=1)
         fair_prob = implied.div(overround, axis=0)
 
-        edge = proba.loc[has_odds, classes] - fair_prob[classes]
+        bettable_classes = allowed_classes or classes
+        edge = proba.loc[has_odds, bettable_classes] - fair_prob[bettable_classes]
         best_class = edge.idxmax(axis=1)
         best_edge = edge.max(axis=1)
 
         bets = best_edge[best_edge > edge_threshold]
         if len(bets) == 0:
-            print("\n=== Value-bet backtest ===")
-            print(f"No bets cleared the edge threshold ({edge_threshold}).")
-            return
+            return {
+                'bets_placed': 0, 'odds_covered_rows': int(has_odds.sum()),
+                'win_rate': 0.0, 'total_staked': 0.0, 'total_profit': 0.0, 'roi': 0.0,
+            }
 
         bet_rows = df_holdout.loc[bets.index]
         bet_class = best_class.loc[bets.index]
-        bet_odds = odds.loc[bets.index].to_numpy()
         chosen_odds = np.array([odds.loc[idx, cls] for idx, cls in bet_class.items()])
         actual = bet_rows['result'].to_numpy()
         won = actual == bet_class.to_numpy()
@@ -196,14 +223,17 @@ class TrainModel:
         profit = np.where(won, stake * (chosen_odds - 1.0), -stake)
         total_staked = stake * len(bets)
         total_profit = float(profit.sum())
-        roi = total_profit / total_staked if total_staked > 0 else 0.0
 
-        print("\n=== Value-bet backtest ===")
-        print(f"Bets placed: {len(bets)} / {has_odds.sum()} odds-covered holdout rows (edge > {edge_threshold})")
-        print(f"Win rate: {won.mean():.4f}")
-        print(f"Total staked: {total_staked:.2f}, total profit: {total_profit:.2f}, ROI: {roi:.4f}")
+        return {
+            'bets_placed': len(bets),
+            'odds_covered_rows': int(has_odds.sum()),
+            'win_rate': float(won.mean()),
+            'total_staked': float(total_staked),
+            'total_profit': total_profit,
+            'roi': (total_profit / total_staked) if total_staked > 0 else 0.0,
+        }
 
-    def save(self, model, feature_columns, best_params, df_train, df_holdout):
+    def save(self, model, feature_columns, best_params, df_train, df_holdout, calibration_method='isotonic'):
         model_path = self.config['trained_model']['model_path']
         os.makedirs(os.path.dirname(model_path), exist_ok=True)
 
@@ -213,6 +243,7 @@ class TrainModel:
             'feature_columns': feature_columns,
             'classes': list(model.classes_),
             'best_params': best_params,
+            'calibration_method': calibration_method,
             'trained_at': datetime.now(timezone.utc).isoformat(),
             'train_seasons': sorted(df_train['season'].unique().tolist()),
             'holdout_seasons': sorted(df_holdout['season'].unique().tolist()),

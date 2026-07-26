@@ -22,6 +22,41 @@ train:
   edge_threshold: 0.05
   # Flat stake used in the value-bet backtest.
   stake: 10.0
+  # 'isotonic', chosen after a walk-forward comparison across the last FIVE
+  # seasons (2021-22 .. 2025-26, each trained only on data strictly before
+  # it). A first pass using only the last two seasons pointed to 'sigmoid',
+  # but that turned out to be an artifact of a too-small sample: with 5
+  # seasons, isotonic's edge > 0.05 bets are positive in 3/5 seasons with a
+  # ~2x larger sample (905 vs 466 bets) and a much smaller worst-case
+  # (essentially flat, -0.2%) than sigmoid's real -15.2% miss in 2022-23.
+  # Both still show the same overfit-in-the-tail failure mode at edge > 0.08
+  # (isotonic) — stick to edge_threshold 0.05, don't chase higher thresholds
+  # on either method without a lot more data.
+  calibration_method: isotonic
+  # Restricting bets to home-win only (see scenario.bet_classes below for
+  # why) rather than "whichever of H/D/A has the biggest edge" -- set to
+  # null to see the unrestricted backtest again.
+  bet_classes: ["H"]
 
 trained_model:
   model_path: "data/trained_model/trained_model.joblib"
+
+scenario:
+  # Bankroll simulation defaults for the `scenario` command -- override any
+  # of these per run with the matching --flag.
+  starting_bankroll: 1000.0
+  # Minimum (model probability - de-vigged market probability) to bet at all.
+  edge_threshold: 0.05
+  # Stake is sized by the Kelly criterion as a fraction of the *current*
+  # bankroll, rounded to a whole euro. 1.0 = full Kelly; lower (e.g. 0.5 for
+  # "half Kelly") trades growth for lower variance.
+  kelly_fraction: 1.0
+  # Betting whichever of H/D/A has the biggest edge each match means picking
+  # the max of 3 noisy edge estimates, which inflates the apparent edge on
+  # its own regardless of any real signal. Restricting to home-win-only bets
+  # removes that: at edge_threshold 0.05 with isotonic calibration, it was
+  # positive in *all 5* of the last 5 independently-evaluated seasons
+  # (+3.0%, +1.5%, +4.8%, +2.2%, +0.2% ROI), vs. only 3/5 for the
+  # unrestricted "best of 3" approach -- smaller returns, but far more
+  # consistent, which is the more trustworthy signal of the two.
+  bet_classes: ["H"]
